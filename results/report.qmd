@@ -41,13 +41,13 @@ biomarker_raw <- read_csv(here::here("data", "biomarker-raw.csv"), show_col_type
 
 ## Findings
 
-Summarize your findings here. I've included some subheaders in a way that seems natural to me; you can structure this section however you like.
-
-### Impact of preprocessing and outliers
-
 **Task 1**
 
 **Task 2**
+
+We will approach this task by finding the outliers' basic distribution parameters, distribution, and their relevant categorical variables. Sub-findings of these three main directions will be presented by graphs.
+
+We first start with finding the number of outliers per subject to help us get an initial view of the outlier's situation.
 
 ```{r, warning=FALSE}
 if (!"subject_id" %in% names(biomarker_raw)) {
@@ -105,6 +105,10 @@ summary_by_group <- subject_outlier_counts %>%
 kable(summary_by_group, caption = "Outlier counts per subject, summarized by group")
 ```
 
+The summary table shows that subjects in both groups (ASD and TD) have similar number of outlying biomarker values. Specifically, the ASD group has a mean of about 65 outliers per subject, while the TD group has about 59. In terms of variability, ASD is higher than TD group, as suggested by the median and maximum outlying values.
+
+We then proceed to draw a boxplot to further examine the distribution of the outliers.
+
 ```{r}
 ggplot(subject_outlier_counts %>% filter(!is.na(group)),
        aes(x = group, y = n_outliers)) +
@@ -115,6 +119,12 @@ ggplot(subject_outlier_counts %>% filter(!is.na(group)),
        x = "Group", y = "Count of Outlying Values")
 ```
 
+Information we can derive from the boxplot aligns with our findings from the previous chart. In terms of distribution, both ASD and TD groups are right-skewed, implying that while most subjects have moderate numbers of outlying biomarker values, a few individuals shows extremely high counts.
+
+The spread is slightly larger for the ASD group, suggesting that it may contains more extreme subjects. Overall, outliers occur in both groups, but variability appears somewhat greater among ASD group.
+
+Thus, we are also interested to identify the specific subjects that are responsible for the variability. Namely, subjects that have extreme outlying values are likely the cause for a greater variability in general. We will move forward to identify the possible subjects.
+
 ```{r}
 subject_outlier_counts %>%
   filter(!is.na(group)) %>%
@@ -122,6 +132,10 @@ subject_outlier_counts %>%
   head(10) %>%
   kable(caption = "Subjects with the most outlying biomarker values")
 ```
+
+This table identifies specific subjects responsible for the extreme values observed in the previous analyses. Subjects 156, 149, and 110 (TD) and 65 and 10 (ASD) present the highest counts of outlying biomarkers, each exceeding 200. These individuals are likely driving the group-level variability seen in the boxplot. Therefore, future preprocessing steps should consider removing or, at least, examining these individuals rather than trimming entire groups.
+
+Conclusively, given that we disable the outlier trimming process, a small subset of participants, both ASD and TD specifically, produce a number of extreme biomarker values. Outliers are slightly more frequent and variable in the ASD group, but the overall distribution suggests that extreme measurements are individual-caused, not group-driven.
 
 ### Methodological variations
 
