@@ -1,7 +1,11 @@
 ---
 title: "Biomarkers of ASD"
-subtitle: "If you want a subtitle put it here"
-author: "List names here"
+author:
+- Jimmy Wu
+- Jasper Luo
+- Daixi Zhu
+- Charles Yang
+- Ben Hurt
 date: last-modified
 published-title: "Updated"
 editor: visual
@@ -14,11 +18,13 @@ execute:
   cache: true
 ---
 
-Use this as a template. Keep the headers and remove all other text. In all, your report can be quite short. When it is complete, render and then push changes to your team repository.
-
-```{r}
-# load any other packages and read data here
+```{r, include=FALSE}
 library(tidyverse)
+library(here)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(knitr)
 ```
 
 ## Abstract
@@ -29,17 +35,107 @@ Write a brief one-paragraph abstract that describes the contents of your write-u
 
 Write a brief data description, including: how data were obtained; sample characteristics; variables measured; and data preprocessing. This can be largely based on the source paper and should not exceed 1-2 paragraphs.
 
-## Summary of published analysis
-
-Summarize the methodology of the paper in 1-3 paragraphs. You need not explain the methods in depth as we did in class; just indicate what methods were used and how they were combined. If possible, include a diagram that depicts the methodological design. (Quarto has support for [GraphViz and Mermaid flowcharts](https://quarto.org/docs/authoring/diagrams.html).) Provide key results: the proteins selected for the classifier and the estimated accuracy.
+```{r}
+biomarker_raw <- read_csv(here::here("data", "biomarker-raw.csv"), show_col_types = FALSE)
+```
 
 ## Findings
 
-Summarize your findings here. I've included some subheaders in a way that seems natural to me; you can structure this section however you like.
+**Task 1**
 
-### Impact of preprocessing and outliers
+**Task 2**
 
-Tasks 1-2
+We will approach this task by finding the outliers' basic distribution parameters, distribution, and their relevant categorical variables. Sub-findings of these three main directions will be presented by graphs.
+
+We first start with finding the number of outliers per subject to help us get an initial view of the outlier's situation.
+
+```{r, warning=FALSE}
+if (!"subject_id" %in% names(biomarker_raw)) {
+  biomarker_raw <- biomarker_raw %>% mutate(subject_id = row_number(), .before = 1)
+}
+if ("Group" %in% names(biomarker_raw) && !"group" %in% names(biomarker_raw)) {
+  biomarker_raw <- biomarker_raw %>% rename(group = Group)
+}
+
+meta_cols <- c("subject_id", "group", "Target Full Name")
+
+biomarker_raw <- biomarker_raw %>%
+  mutate(across(-any_of(meta_cols), ~ readr::parse_number(as.character(.x))))
+
+num_cols <- biomarker_raw %>%
+  select(-any_of(meta_cols)) %>%
+  select(where(is.numeric)) %>%
+  names()
+```
+
+```{r}
+outlier_limits <- biomarker_raw %>%
+  select(all_of(num_cols)) %>%
+  pivot_longer(everything(), names_to = "biomarker", values_to = "value") %>%
+  group_by(biomarker) %>%
+  summarize(
+    Q1 = quantile(value, 0.25, na.rm = TRUE),
+    Q3 = quantile(value, 0.75, na.rm = TRUE),
+    IQR = Q3 - Q1,
+    lower = Q1 - 1.5 * IQR,
+    upper = Q3 + 1.5 * IQR,
+    .groups = "drop"
+  )
+
+outlier_flagged <- biomarker_raw %>%
+  select(subject_id, group, all_of(num_cols)) %>%
+  pivot_longer(cols = all_of(num_cols), names_to = "biomarker", values_to = "value") %>%
+  left_join(outlier_limits, by = "biomarker") %>%
+  mutate(is_outlier = value < lower | value > upper)
+
+subject_outlier_counts <- outlier_flagged %>%
+  group_by(subject_id, group) %>%
+  summarize(n_outliers = sum(is_outlier, na.rm = TRUE), .groups = "drop") %>%
+  filter(!is.na(group))
+
+summary_by_group <- subject_outlier_counts %>%
+  group_by(group) %>%
+  summarize(
+    mean_outliers   = mean(n_outliers),
+    median_outliers = median(n_outliers),
+    max_outliers    = max(n_outliers),
+    .groups = "drop"
+  )
+
+kable(summary_by_group, caption = "Outlier counts per subject, summarized by group")
+```
+
+The summary table shows that subjects in both groups (ASD and TD) have similar number of outlying biomarker values. Specifically, the ASD group has a mean of about 65 outliers per subject, while the TD group has about 59. In terms of variability, ASD is higher than TD group, as suggested by the median and maximum outlying values.
+
+We then proceed to draw a boxplot to further examine the distribution of the outliers.
+
+```{r}
+ggplot(subject_outlier_counts %>% filter(!is.na(group)),
+       aes(x = group, y = n_outliers)) +
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  theme_minimal(base_size = 12) +
+  labs(title = "Number of Outlying Biomarker Values per Subject",
+       x = "Group", y = "Count of Outlying Values")
+```
+
+Information we can derive from the boxplot aligns with our findings from the previous chart. In terms of distribution, both ASD and TD groups are right-skewed, implying that while most subjects have moderate numbers of outlying biomarker values, a few individuals shows extremely high counts.
+
+The spread is slightly larger for the ASD group, suggesting that it may contains more extreme subjects. Overall, outliers occur in both groups, but variability appears somewhat greater among ASD group.
+
+Thus, we are also interested to identify the specific subjects that are responsible for the variability. Namely, subjects that have extreme outlying values are likely the cause for a greater variability in general. We will move forward to identify the possible subjects.
+
+```{r}
+subject_outlier_counts %>%
+  filter(!is.na(group)) %>%
+  arrange(desc(n_outliers)) %>%
+  head(10) %>%
+  kable(caption = "Subjects with the most outlying biomarker values")
+```
+
+This table identifies specific subjects responsible for the extreme values observed in the previous analyses. Subjects 156, 149, and 110 (TD) and 65 and 10 (ASD) present the highest counts of outlying biomarkers, each exceeding 200. These individuals are likely driving the group-level variability seen in the boxplot. Therefore, future preprocessing steps should consider removing or, at least, examining these individuals rather than trimming entire groups.
+
+Conclusively, given that we disable the outlier trimming process, a small subset of participants, both ASD and TD specifically, produce a number of extreme biomarker values. Outliers are slightly more frequent and variable in the ASD group, but the overall distribution suggests that extreme measurements are individual-caused, not group-driven.
 
 ### Methodological variations
 
