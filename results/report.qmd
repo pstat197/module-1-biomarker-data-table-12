@@ -14,7 +14,7 @@ code-copy: true
 execute:
   message: false
   warning: false
-  echo: false
+  echo: true
   cache: true
 ---
 
@@ -26,6 +26,9 @@ library(ggplot2)
 library(dplyr)
 library(knitr)
 library(e1071)
+library(randomForest)
+library(pROC)
+library(caret)
 ```
 
 ## Abstract
@@ -54,7 +57,7 @@ sample_prots <- sample(colnames(num_dat), size = min(6, ncol(num_dat)))
 sample_prots
 ```
 
-```{r,eval=TRUE,echo=FALSE, fig.show='hold', fig.align='center', out.width='80%'}
+```{r}
 # histograms of raw protein values
 par(mfrow = c(2, 3))
 for (v in sample_prots) {
@@ -242,6 +245,172 @@ Conclusively, given that we disable the outlier trimming process, a small subset
 ### Methodological variations
 
 Task 3
+
+We start by examining the raw data to see both classes (ASD and TD) are present. This baseline helps us track if samples disappear during cleaning. If we see both classes here, we know our original data is good.
+
+```{r}
+load(here::here("data", "biomarker-clean.RData"))
+ls()
+print(table(biomarker_clean$group))
+```
+
+```{r}
+# Remove columns that are ALL NA
+df <- biomarker_clean %>%
+  select(where(~!all(is.na(.))))
+
+print(table(df$group))
+```
+
+We remove columns where every single value is missing (all NA), as these provide no information for modeling. This step should NOT remove any rows or change class distribution - we're only dropping useless features.
+
+```{r}
+# Separate numeric columns and group
+numeric_cols <- names(df)[sapply(df, is.numeric)]
+group_col <- df$group
+
+# Impute missing values with median
+for (col in numeric_cols) {
+  if (any(is.na(df[[col]]))) {
+    df <- df %>%
+      group_by(group) %>%
+      mutate(!!col := ifelse(is.na(.data[[col]]), 
+                             median(.data[[col]], na.rm = TRUE), 
+                             .data[[col]])) %>%
+      ungroup()
+    
+    if (any(is.na(df[[col]]))) {
+      df[[col]][is.na(df[[col]])] <- median(df[[col]], na.rm = TRUE)
+    }
+  }
+}
+
+# Remove any remaining rows with NA
+df <- df %>% na.omit()
+
+print(table(df$group))
+
+# Verify we have both classes
+if (length(unique(df$group)) < 2) {
+  stop("ERROR: Still missing one class. Check your imputation.")
+}
+```
+
+This is the most important step. Instead of deleting rows with missing values (which removed all TD samples), we fill them with reasonable estimates. We use the median value from each group separately (ASD vs TD) to preserve group-specific patterns. This keeps both classes in our dataset while still handling missing data appropriately.
+
+```{r}
+# Prepare for modeling
+colnames(df) <- make.names(colnames(df))
+df$group <- as.factor(df$group)
+df$group <- droplevels(df$group)
+
+print(table(df$group))
+minority_pct <- min(table(df$group)) / sum(table(df$group)) * 100
+print(paste("Minority class:", round(minority_pct, 1), "%"))
+```
+
+We clean up column names to avoid special characters that could cause issues, convert our outcome variable to a factor (required for classification), and remove any unused factor levels. We also calculate class imbalance to see if we need to handle it during training.
+
+```{r}
+# Stratified train/test split
+set.seed(10302025)
+train_idx <- createDataPartition(df$group, p = 0.8, list = FALSE)
+train_df <- df[train_idx, ]
+test_df  <- df[-train_idx, ]
+
+# Drop unused levels
+train_df$group <- droplevels(train_df$group)
+test_df$group <- droplevels(test_df$group)
+
+print("Train:")
+print(table(train_df$group))
+print("Test:")
+print(table(test_df$group))
+```
+
+We split data into 80% training and 20% test sets using stratified sampling, which ensures both ASD and TD are proportionally represented in each set. This prevents situations where one class might be entirely missing from the test set. Setting a seed makes results reproducible.
+
+```{r}
+# Train Random Forest with class balancing
+# Calculate class weights for imbalanced data
+class_counts <- table(train_df$group)
+class_weights <- max(class_counts) / class_counts
+
+print("Class Weight:")
+print(class_weights)
+```
+
+We train a Random Forest classifier with 500 trees, using the class weights we calculated to handle imbalance. The 'importance=TRUE' flag tells the model to track which features are most useful for classification, helping us understand what biomarkers best distinguish ASD from TD.
+
+```{r}
+
+rf_model <- randomForest(
+  group ~ ., 
+  data = train_df, 
+  importance = TRUE,
+  classwt = class_weights,  # Handle class imbalance
+  ntree = 500
+)
+
+print("Model Summary")
+print(rf_model)
+
+# Predictions
+rf_pred_class <- predict(rf_model, newdata = test_df, type = "response")
+rf_pred_prob <- predict(rf_model, newdata = test_df, type = "prob")
+
+# Confusion matrix
+conf_mat <- table(Predicted = rf_pred_class, Actual = test_df$group)
+print(conf_mat)
+
+# Calculate accuracy
+accuracy <- sum(diag(conf_mat)) / sum(conf_mat)
+print(paste("Accuracy:", round(accuracy * 100, 2), "%"))
+```
+
+We apply our trained model to the held-out test set to evaluate performance. The confusion matrix shows how many samples were correctly vs incorrectly classified. Accuracy tells us the overall percentage correct, but we'll also look at AUC which better handles imbalanced classes.
+
+```{r}
+# ROC/AUC (use minority class - usually ASD)
+minority_class <- names(which.min(table(df$group)))
+print(paste("\nUsing", minority_class, "as positive class for ROC"))
+
+rf_pred_minority <- rf_pred_prob[, minority_class]
+
+# Create ROC
+roc_obj <- roc(test_df$group, rf_pred_minority)
+auc_val <- auc(roc_obj)
+
+print("ROC results:")
+print(roc_obj)
+print(paste("AUC:", round(auc_val, 4)))
+
+# Plot ROC curve
+plot(roc_obj, 
+     main = paste("ROC Curve - AUC:", round(auc_val, 3)),
+     col = "blue", 
+     lwd = 2)
+abline(a = 0, b = 1, lty = 2, col = "red")
+
+# Feature importance
+importance_scores <- importance(rf_model)
+importance_df <- data.frame(
+  Feature = rownames(importance_scores),
+  MeanDecreaseGini = importance_scores[, "MeanDecreaseGini"]
+)
+importance_df <- importance_df[order(-importance_df$MeanDecreaseGini), ]
+print(head(importance_df, 10))
+
+# Plot feature importance
+varImpPlot(rf_model, n.var = 10, main = "Top 10 Important Features")
+```
+
+ROC curve shows the trade-off between true positive rate (sensitivity) and false positive rate across different probability thresholds. AUC (Area Under Curve) summarizes this into a single number: 0.5 is random guessing, 1.0 is perfect classification. For clinical biomarkers, AUC \> 0.8
+is generally considered good performance.
+
+This plot visualizes our model's discrimination ability. The blue curve shows our Random Forest performance - the more it bows toward the top-left corner, the better. The red diagonal line represents random guessing (50/50). A good classifier has substantial separation from this baseline.
+
+Feature importance tells us which biomarkers contribute most to distinguishing ASD from TD. Higher scores mean the feature is more useful for classification. These top-ranked biomarkers are candidates for further clinical investigation as they show the strongest association with ASD diagnosis in our Random Forest model.
 
 ### Improved classifier
 
