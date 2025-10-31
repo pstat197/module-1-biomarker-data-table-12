@@ -33,11 +33,11 @@ library(caret)
 
 ## Abstract
 
-Write a brief one-paragraph abstract that describes the contents of your write-up.
+In this write up, we use blood based protein biomarkers to classify individuals with autism spectrum disorder (ASD) from typically developing (TD) individuals. We use a PLoS One dataset from the research paper, "Blood biomarker discovery for autism spectrum disorder: A proteomic analysis". Looking into the data, we first see that raw protein measures are right skewed and require transformation to balance the data. Furthermore, we investigate any anomalies and outliers to see if there may be any patterns. After preprocessing the data and performing median imputation (a technique for imputing missing data using the median statistic), we trained a random forest classifier. To assess the performance of this classifier, we consider metrics like accuracy and AUC. Using this classifier, we consider the top ten most important features it uses in classifying individuals, and find the specific biomarkers that contribute toward identifying ASD and TD individuals.
 
 ## Dataset
 
-Write a brief data description, including: how data were obtained; sample characteristics; variables measured; and data preprocessing. This can be largely based on the source paper and should not exceed 1-2 paragraphs.
+The dataset contains serum protein measurements from 154 children, 76 of which diagnosed with ASD (autism spectrum disorder) and the remaining 78 considered TD (typically developing). Taken from the study, “Blood biomarker discovery for autism spectrum disorder: A proteomic analysis” these samples were analyzed and provide the expression levels of around 1,300+ proteins. The dataset itself includes a label identifying whether or not a participant has ASD or is TD, along with biomarker measurements for each participant. These biomarker measurements are numerical, whereas the labels are strings. Before analysis, we observed that the raw protein levels had strong right skewedness, so we performed a log transformation to correct the variance (balance the dataset) and reduce the influence the outliers may have. Then, we examined such outliers to identify any patterns and used median imputation within each group to handle any missing values while preserving group characteristics/features before training our random forest.
 
 ```{r}
 biomarker_raw <- read_csv(here::here("data", "biomarker-raw.csv"), show_col_types = FALSE)
@@ -405,8 +405,7 @@ print(head(importance_df, 10))
 varImpPlot(rf_model, n.var = 10, main = "Top 10 Important Features")
 ```
 
-ROC curve shows the trade-off between true positive rate (sensitivity) and false positive rate across different probability thresholds. AUC (Area Under Curve) summarizes this into a single number: 0.5 is random guessing, 1.0 is perfect classification. For clinical biomarkers, AUC \> 0.8
-is generally considered good performance.
+ROC curve shows the trade-off between true positive rate (sensitivity) and false positive rate across different probability thresholds. AUC (Area Under Curve) summarizes this into a single number: 0.5 is random guessing, 1.0 is perfect classification. For clinical biomarkers, AUC \> 0.8 is generally considered good performance.
 
 This plot visualizes our model's discrimination ability. The blue curve shows our Random Forest performance - the more it bows toward the top-left corner, the better. The red diagonal line represents random guessing (50/50). A good classifier has substantial separation from this baseline.
 
