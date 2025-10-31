@@ -12,8 +12,9 @@ output:
 library(tidyverse)
 library(e1071)
 library(readr)
+library(here)
 
-dat <- read.csv("Desktop/biomarker-raw.csv", check.names = FALSE)
+dat <- read_csv(here::here("data", "biomarker-raw.csv"), show_col_types = FALSE)
 
 # keep only numeric protein columns (drop id/label columns if any)
 num_dat <- dat %>% select(where(is.numeric))
@@ -23,7 +24,6 @@ set.seed(1)
 sample_prots <- sample(colnames(num_dat), size = min(6, ncol(num_dat)))
 
 sample_prots
-
 ```
 
 ```{r}
