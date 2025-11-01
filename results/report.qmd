@@ -18,10 +18,7 @@ execute:
   cache: true
 ---
 
-format:
-  html:
-    self-contained: true
-
+format: html: self-contained: true
 
 ```{r setup, include=FALSE}
 library(tidyverse)
@@ -38,7 +35,7 @@ library(caret)
 
 ## Abstract
 
-In this write up, we use blood based protein biomarkers to classify individuals with autism spectrum disorder (ASD) from typically developing (TD) individuals. We use a PLoS One dataset from the research paper, "Blood biomarker discovery for autism spectrum disorder: A proteomic analysis". Looking into the data, we first see that raw protein measures are right skewed and require transformation to balance the data. Furthermore, we investigate any anomalies and outliers to see if there may be any patterns. After preprocessing the data and performing median imputation (a technique for imputing missing data using the median statistic), we trained a random forest classifier. To assess the performance of this classifier, we consider metrics like accuracy and AUC. Using this classifier, we consider the top ten most important features it uses in classifying individuals, and find the specific biomarkers that contribute toward identifying ASD and TD individuals.
+In this write up, we use blood based protein biomarkers to classify individuals with autism spectrum disorder (ASD) from typically developing (TD) individuals. We use a PLoS One dataset from the research paper, "Blood biomarker discovery for autism spectrum disorder: A proteomic analysis". Looking into the data, we first see that raw protein measures are right skewed and require transformation to balance the data. Furthermore, we investigate any anomalies and outliers to see if there may be any patterns. After preprocessing the data and performing median imputation (a technique for imputing missing data using the median statistic), we trained a random forest classifier. To assess the performance of this classifier, we consider metrics like accuracy and AUC. Using this classifier, we consider the top ten most important features it uses in classifying individuals, and find the specific biomarkers that contribute toward identifying ASD and TD individuals. Building upon this, we also train a lasso-ridge classifier model using two different sets of parameters to attempt to improve our baseline random forest classifier. We find that the lasso-ridge classifier outperforms the random forest model by three points on the AUC metric (AUC RF .808 vs AUC LR .838).
 
 ## Dataset
 
@@ -418,4 +415,106 @@ Feature importance tells us which biomarkers contribute most to distinguishing A
 
 ### Improved classifier
 
-Task 4
+```{r}
+library(glmnet)
+library(pROC)
+library(caret)
+library(tidyverse)
+library(modelr)
+library(rsample)
+library(yardstick)
+library(ggplot2)
+library(dplyr)
+
+load(here::here("data", "biomarker-clean.RData"))
+
+head(biomarker_clean)
+biomarker_data <- biomarker_clean %>% 
+  select(-starts_with("ados"))
+
+biomarker_data$group <- factor(biomarker_data$group)
+```
+
+```{r}
+set.seed(1)
+partitions <- biomarker_data %>% 
+  initial_split(prop = 0.8)
+
+partitions
+
+train_data <- training(partitions)
+test_data <- testing(partitions)
+
+X_train <- train_data[, !(names(train_data) %in% "group")]
+y_train <- train_data$group
+X_test <- test_data[, !(names(test_data) %in% "group")]
+y_test <- test_data$group
+```
+
+Fit lasso logistic regression (feature selection)
+
+```{r}
+X_train_mat <- as.matrix(X_train)
+X_test_mat <- as.matrix(X_test)
+
+# 10-fold cross-validation for lambda
+cv_fit <- cv.glmnet(
+  X_train_mat, y_train,
+  family = "binomial",
+  alpha = 0.77,
+  nfolds = 10,
+  type.measure = 'deviance')
+
+plot(cv_fit)
+lambda_min <- cv_fit$lambda.min
+lambda_1se <- cv_fit$lambda.1se
+```
+
+```{r}
+# LASSO estimates
+fit <- glmnet(X_train, y_train, family = "binomial")
+fit_df <- tidy(fit)
+
+ggplot(fit_df, aes(x = log(lambda), y = estimate, color = term)) +
+  geom_line() +
+  theme_minimal() +
+  labs(x = "log(Lambda)", y = "Coefficient") +
+  theme(legend.position = "none") +
+  geom_vline(xintercept = log(lambda_min), linetype = "dashed", color = "red") +
+  geom_vline(xintercept = log(lambda_1se), linetype = "dashed", color = "blue")
+```
+
+Identify selected biomarkers
+
+```{r}
+coef_lasso <- coef(cv_fit, s = "lambda.1se")
+selected_idx <- which(coef_lasso != 0)
+selected_features <- rownames(coef_lasso)[selected_idx][-1] # drop intercept
+
+cat("Selected proteins:\n")
+print(selected_features)
+cat("Total:", length(selected_features), "proteins\n")
+```
+
+```{r}
+train_sel <- train_data[, c(selected_features, "group")]
+test_sel <- test_data[, c(selected_features, "group")]
+
+model_alt <- glm(group ~ ., data = train_sel, family = "binomial")
+summary(model_alt)
+
+probs <- predict(model_alt, newdata = test_sel, type = "response")
+preds <- ifelse(probs > 0.5, 1, 0)
+```
+
+```{r}
+roc_obj <- roc(y_test, probs)
+auc_alt <- auc(roc_obj)
+accuracy <- mean(preds == as.numeric(as.character(y_test)))
+
+cat("Alternative LASSO panel AUROC:", round(auc_alt, 3), "\n")
+cat("Accuracy:", round(accuracy, 3), "\n")
+
+# ROC plot
+plot(roc_obj, col = "blue", main = "ROC Curve - Alternative LASSO Panel")
+```
