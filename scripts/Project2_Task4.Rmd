@@ -5,7 +5,7 @@ output:
   html_document: default
 ---
 
-```{r}
+```{r, warning = FALSE}
 library(glmnet)
 library(pROC)
 library(caret)
@@ -14,6 +14,7 @@ library(modelr)
 library(rsample)
 library(yardstick)
 library(ggplot2)
+library(dplyr)
 ```
 
 ```{r}
@@ -53,7 +54,7 @@ X_test_mat <- as.matrix(X_test)
 cv_fit <- cv.glmnet(
   X_train_mat, y_train,
   family = "binomial",
-  alpha = 1,
+  alpha = 0.77,
   nfolds = 10,
   type.measure = 'deviance')
 
