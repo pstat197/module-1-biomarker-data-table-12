@@ -3,7 +3,7 @@ title: "Biomarkers of ASD"
 author:
 - Jimmy Wu
 - Jasper Luo
-- Daixi Zhu
+- Coraline Zhu
 - Charles Yang
 - Ben Hurt
 date: last-modified
@@ -17,6 +17,11 @@ execute:
   echo: true
   cache: true
 ---
+
+format:
+  html:
+    self-contained: true
+
 
 ```{r setup, include=FALSE}
 library(tidyverse)
