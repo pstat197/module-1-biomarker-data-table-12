@@ -9,7 +9,9 @@ author:
 date: last-modified
 published-title: "Updated"
 editor: visual
-format: html
+format:
+  html:
+    self-contained: true
 code-copy: true
 execute:
   message: false
@@ -17,8 +19,6 @@ execute:
   echo: true
   cache: true
 ---
-
-format: html: self-contained: true
 
 ```{r setup, include=FALSE}
 library(tidyverse)
