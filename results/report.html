@@ -11,7 +11,7 @@
 <meta name="author" content="Coraline Zhu">
 <meta name="author" content="Charles Yang">
 <meta name="author" content="Ben Hurt">
-<meta name="dcterms.date" content="2025-10-30">
+<meta name="dcterms.date" content="2025-10-31">
 
 <title>Biomarkers of ASD</title>
 <style>
@@ -106,7 +106,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
     <div>
     <div class="quarto-title-meta-heading">Updated</div>
     <div class="quarto-title-meta-contents">
-      <p class="date">October 30, 2025</p>
+      <p class="date">October 31, 2025</p>
     </div>
   </div>
   
@@ -118,13 +118,14 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
+<p>format: html: self-contained: true</p>
 <section id="abstract" class="level2">
 <h2 class="anchored" data-anchor-id="abstract">Abstract</h2>
-<p>Write a brief one-paragraph abstract that describes the contents of your write-up.</p>
+<p>In this write up, we use blood based protein biomarkers to classify individuals with autism spectrum disorder (ASD) from typically developing (TD) individuals. We use a PLoS One dataset from the research paper, “Blood biomarker discovery for autism spectrum disorder: A proteomic analysis”. Looking into the data, we first see that raw protein measures are right skewed and require transformation to balance the data. Furthermore, we investigate any anomalies and outliers to see if there may be any patterns. After preprocessing the data and performing median imputation (a technique for imputing missing data using the median statistic), we trained a random forest classifier. To assess the performance of this classifier, we consider metrics like accuracy and AUC. Using this classifier, we consider the top ten most important features it uses in classifying individuals, and find the specific biomarkers that contribute toward identifying ASD and TD individuals. Building upon this, we also train a lasso-ridge classifier model using two different sets of parameters to attempt to improve our baseline random forest classifier. We find that the lasso-ridge classifier outperforms the random forest model by three points on the AUC metric (AUC RF .808 vs AUC LR .838).</p>
 </section>
 <section id="dataset" class="level2">
 <h2 class="anchored" data-anchor-id="dataset">Dataset</h2>
-<p>Write a brief data description, including: how data were obtained; sample characteristics; variables measured; and data preprocessing. This can be largely based on the source paper and should not exceed 1-2 paragraphs.</p>
+<p>The dataset contains serum protein measurements from 154 children, 76 of which diagnosed with ASD (autism spectrum disorder) and the remaining 78 considered TD (typically developing). Taken from the study, “Blood biomarker discovery for autism spectrum disorder: A proteomic analysis” these samples were analyzed and provide the expression levels of around 1,300+ proteins. The dataset itself includes a label identifying whether or not a participant has ASD or is TD, along with biomarker measurements for each participant. These biomarker measurements are numerical, whereas the labels are strings. Before analysis, we observed that the raw protein levels had strong right skewedness, so we performed a log transformation to correct the variance (balance the dataset) and reduce the influence the outliers may have. Then, we examined such outliers to identify any patterns and used median imputation within each group to handle any missing values while preserving group characteristics/features before training our random forest.</p>
 <div class="cell">
 <div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>biomarker_raw <span class="ot">&lt;-</span> <span class="fu">read_csv</span>(here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"data"</span>, <span class="st">"biomarker-raw.csv"</span>), <span class="at">show_col_types =</span> <span class="cn">FALSE</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </div>
@@ -705,7 +706,220 @@ MRC2               MRC2        0.3229365</code></pre>
 </section>
 <section id="improved-classifier" class="level3">
 <h3 class="anchored" data-anchor-id="improved-classifier">Improved classifier</h3>
-<p>Task 4</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb61"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb61-1"><a href="#cb61-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(glmnet)</span>
+<span id="cb61-2"><a href="#cb61-2" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(pROC)</span>
+<span id="cb61-3"><a href="#cb61-3" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(caret)</span>
+<span id="cb61-4"><a href="#cb61-4" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(tidyverse)</span>
+<span id="cb61-5"><a href="#cb61-5" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(modelr)</span>
+<span id="cb61-6"><a href="#cb61-6" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(rsample)</span>
+<span id="cb61-7"><a href="#cb61-7" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(yardstick)</span>
+<span id="cb61-8"><a href="#cb61-8" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(ggplot2)</span>
+<span id="cb61-9"><a href="#cb61-9" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(dplyr)</span>
+<span id="cb61-10"><a href="#cb61-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb61-11"><a href="#cb61-11" aria-hidden="true" tabindex="-1"></a><span class="fu">load</span>(here<span class="sc">::</span><span class="fu">here</span>(<span class="st">"data"</span>, <span class="st">"biomarker-clean.RData"</span>))</span>
+<span id="cb61-12"><a href="#cb61-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb61-13"><a href="#cb61-13" aria-hidden="true" tabindex="-1"></a><span class="fu">head</span>(biomarker_clean)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code># A tibble: 6 × 1,319
+  group  ados    CHIP  CEBPB     NSE   PIAS4 `IL-10 Ra`  STAT3   IRF1 `c-Jun`
+  &lt;chr&gt; &lt;dbl&gt;   &lt;dbl&gt;  &lt;dbl&gt;   &lt;dbl&gt;   &lt;dbl&gt;      &lt;dbl&gt;  &lt;dbl&gt;  &lt;dbl&gt;   &lt;dbl&gt;
+1 ASD       8  0.335   0.520 -0.554   0.650      -0.358  0.305 -0.484   0.309
+2 ASD      21 -0.0715  1.01   3       1.28       -0.133  1.13   0.253   0.408
+3 ASD      12 -0.406  -0.531 -0.0592  1.13        0.554 -0.334  0.287  -0.845
+4 ASD      20 -0.102  -0.251  1.47    0.0773     -0.705  0.893  2.61   -0.372
+5 ASD      22 -0.395  -0.536  0.0410 -0.299      -0.830  0.899  1.01   -0.843
+6 ASD      17 -0.126   1.27  -0.892   0.239      -0.344  0.216  0.211   0.221
+# ℹ 1,309 more variables: `Mcl-1` &lt;dbl&gt;, OAS1 &lt;dbl&gt;, `c-Myc` &lt;dbl&gt;,
+#   SMAD3 &lt;dbl&gt;, SMAD2 &lt;dbl&gt;, `IL-23` &lt;dbl&gt;, PDGFRA &lt;dbl&gt;, `IL-12` &lt;dbl&gt;,
+#   STAT1 &lt;dbl&gt;, STAT6 &lt;dbl&gt;, LRRK2 &lt;dbl&gt;, Osteocalcin &lt;dbl&gt;, `IL-5` &lt;dbl&gt;,
+#   GPDA &lt;dbl&gt;, IgA &lt;dbl&gt;, LPPL &lt;dbl&gt;, HEMK2 &lt;dbl&gt;, PDXK &lt;dbl&gt;, TLR4 &lt;dbl&gt;,
+#   REG4 &lt;dbl&gt;, `HSP 27` &lt;dbl&gt;, `YKL-40` &lt;dbl&gt;, `Alpha enolase` &lt;dbl&gt;,
+#   `Apo L1` &lt;dbl&gt;, CD38 &lt;dbl&gt;, CD59 &lt;dbl&gt;, FABPL &lt;dbl&gt;, `GDF-11` &lt;dbl&gt;,
+#   BTC &lt;dbl&gt;, `HIF-1a` &lt;dbl&gt;, S100A6 &lt;dbl&gt;, SECTM1 &lt;dbl&gt;, RSPO3 &lt;dbl&gt;, …</code></pre>
+</div>
+<div class="sourceCode cell-code" id="cb63"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb63-1"><a href="#cb63-1" aria-hidden="true" tabindex="-1"></a>biomarker_data <span class="ot">&lt;-</span> biomarker_clean <span class="sc">%&gt;%</span> </span>
+<span id="cb63-2"><a href="#cb63-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(<span class="sc">-</span><span class="fu">starts_with</span>(<span class="st">"ados"</span>))</span>
+<span id="cb63-3"><a href="#cb63-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb63-4"><a href="#cb63-4" aria-hidden="true" tabindex="-1"></a>biomarker_data<span class="sc">$</span>group <span class="ot">&lt;-</span> <span class="fu">factor</span>(biomarker_data<span class="sc">$</span>group)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb64"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb64-1"><a href="#cb64-1" aria-hidden="true" tabindex="-1"></a><span class="fu">set.seed</span>(<span class="dv">1</span>)</span>
+<span id="cb64-2"><a href="#cb64-2" aria-hidden="true" tabindex="-1"></a>partitions <span class="ot">&lt;-</span> biomarker_data <span class="sc">%&gt;%</span> </span>
+<span id="cb64-3"><a href="#cb64-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">initial_split</span>(<span class="at">prop =</span> <span class="fl">0.8</span>)</span>
+<span id="cb64-4"><a href="#cb64-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb64-5"><a href="#cb64-5" aria-hidden="true" tabindex="-1"></a>partitions</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>&lt;Training/Testing/Total&gt;
+&lt;123/31/154&gt;</code></pre>
+</div>
+<div class="sourceCode cell-code" id="cb66"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb66-1"><a href="#cb66-1" aria-hidden="true" tabindex="-1"></a>train_data <span class="ot">&lt;-</span> <span class="fu">training</span>(partitions)</span>
+<span id="cb66-2"><a href="#cb66-2" aria-hidden="true" tabindex="-1"></a>test_data <span class="ot">&lt;-</span> <span class="fu">testing</span>(partitions)</span>
+<span id="cb66-3"><a href="#cb66-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb66-4"><a href="#cb66-4" aria-hidden="true" tabindex="-1"></a>X_train <span class="ot">&lt;-</span> train_data[, <span class="sc">!</span>(<span class="fu">names</span>(train_data) <span class="sc">%in%</span> <span class="st">"group"</span>)]</span>
+<span id="cb66-5"><a href="#cb66-5" aria-hidden="true" tabindex="-1"></a>y_train <span class="ot">&lt;-</span> train_data<span class="sc">$</span>group</span>
+<span id="cb66-6"><a href="#cb66-6" aria-hidden="true" tabindex="-1"></a>X_test <span class="ot">&lt;-</span> test_data[, <span class="sc">!</span>(<span class="fu">names</span>(test_data) <span class="sc">%in%</span> <span class="st">"group"</span>)]</span>
+<span id="cb66-7"><a href="#cb66-7" aria-hidden="true" tabindex="-1"></a>y_test <span class="ot">&lt;-</span> test_data<span class="sc">$</span>group</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<p>Fit lasso logistic regression (feature selection)</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb67"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb67-1"><a href="#cb67-1" aria-hidden="true" tabindex="-1"></a>X_train_mat <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(X_train)</span>
+<span id="cb67-2"><a href="#cb67-2" aria-hidden="true" tabindex="-1"></a>X_test_mat <span class="ot">&lt;-</span> <span class="fu">as.matrix</span>(X_test)</span>
+<span id="cb67-3"><a href="#cb67-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb67-4"><a href="#cb67-4" aria-hidden="true" tabindex="-1"></a><span class="co"># 10-fold cross-validation for lambda</span></span>
+<span id="cb67-5"><a href="#cb67-5" aria-hidden="true" tabindex="-1"></a>cv_fit <span class="ot">&lt;-</span> <span class="fu">cv.glmnet</span>(</span>
+<span id="cb67-6"><a href="#cb67-6" aria-hidden="true" tabindex="-1"></a>  X_train_mat, y_train,</span>
+<span id="cb67-7"><a href="#cb67-7" aria-hidden="true" tabindex="-1"></a>  <span class="at">family =</span> <span class="st">"binomial"</span>,</span>
+<span id="cb67-8"><a href="#cb67-8" aria-hidden="true" tabindex="-1"></a>  <span class="at">alpha =</span> <span class="fl">0.77</span>,</span>
+<span id="cb67-9"><a href="#cb67-9" aria-hidden="true" tabindex="-1"></a>  <span class="at">nfolds =</span> <span class="dv">10</span>,</span>
+<span id="cb67-10"><a href="#cb67-10" aria-hidden="true" tabindex="-1"></a>  <span class="at">type.measure =</span> <span class="st">'deviance'</span>)</span>
+<span id="cb67-11"><a href="#cb67-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb67-12"><a href="#cb67-12" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(cv_fit)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="report_files/figure-html/unnamed-chunk-21-1.png" class="img-fluid figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+<div class="sourceCode cell-code" id="cb68"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb68-1"><a href="#cb68-1" aria-hidden="true" tabindex="-1"></a>lambda_min <span class="ot">&lt;-</span> cv_fit<span class="sc">$</span>lambda.min</span>
+<span id="cb68-2"><a href="#cb68-2" aria-hidden="true" tabindex="-1"></a>lambda_1se <span class="ot">&lt;-</span> cv_fit<span class="sc">$</span>lambda<span class="fl">.1</span>se</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb69"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb69-1"><a href="#cb69-1" aria-hidden="true" tabindex="-1"></a><span class="co"># LASSO estimates</span></span>
+<span id="cb69-2"><a href="#cb69-2" aria-hidden="true" tabindex="-1"></a>fit <span class="ot">&lt;-</span> <span class="fu">glmnet</span>(X_train, y_train, <span class="at">family =</span> <span class="st">"binomial"</span>)</span>
+<span id="cb69-3"><a href="#cb69-3" aria-hidden="true" tabindex="-1"></a>fit_df <span class="ot">&lt;-</span> <span class="fu">tidy</span>(fit)</span>
+<span id="cb69-4"><a href="#cb69-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb69-5"><a href="#cb69-5" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>(fit_df, <span class="fu">aes</span>(<span class="at">x =</span> <span class="fu">log</span>(lambda), <span class="at">y =</span> estimate, <span class="at">color =</span> term)) <span class="sc">+</span></span>
+<span id="cb69-6"><a href="#cb69-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_line</span>() <span class="sc">+</span></span>
+<span id="cb69-7"><a href="#cb69-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_minimal</span>() <span class="sc">+</span></span>
+<span id="cb69-8"><a href="#cb69-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">labs</span>(<span class="at">x =</span> <span class="st">"log(Lambda)"</span>, <span class="at">y =</span> <span class="st">"Coefficient"</span>) <span class="sc">+</span></span>
+<span id="cb69-9"><a href="#cb69-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(<span class="at">legend.position =</span> <span class="st">"none"</span>) <span class="sc">+</span></span>
+<span id="cb69-10"><a href="#cb69-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">xintercept =</span> <span class="fu">log</span>(lambda_min), <span class="at">linetype =</span> <span class="st">"dashed"</span>, <span class="at">color =</span> <span class="st">"red"</span>) <span class="sc">+</span></span>
+<span id="cb69-11"><a href="#cb69-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_vline</span>(<span class="at">xintercept =</span> <span class="fu">log</span>(lambda_1se), <span class="at">linetype =</span> <span class="st">"dashed"</span>, <span class="at">color =</span> <span class="st">"blue"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="report_files/figure-html/unnamed-chunk-22-1.png" class="img-fluid figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
+<p>Identify selected biomarkers</p>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb70"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb70-1"><a href="#cb70-1" aria-hidden="true" tabindex="-1"></a>coef_lasso <span class="ot">&lt;-</span> <span class="fu">coef</span>(cv_fit, <span class="at">s =</span> <span class="st">"lambda.1se"</span>)</span>
+<span id="cb70-2"><a href="#cb70-2" aria-hidden="true" tabindex="-1"></a>selected_idx <span class="ot">&lt;-</span> <span class="fu">which</span>(coef_lasso <span class="sc">!=</span> <span class="dv">0</span>)</span>
+<span id="cb70-3"><a href="#cb70-3" aria-hidden="true" tabindex="-1"></a>selected_features <span class="ot">&lt;-</span> <span class="fu">rownames</span>(coef_lasso)[selected_idx][<span class="sc">-</span><span class="dv">1</span>] <span class="co"># drop intercept</span></span>
+<span id="cb70-4"><a href="#cb70-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb70-5"><a href="#cb70-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Selected proteins:</span><span class="sc">\n</span><span class="st">"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Selected proteins:</code></pre>
+</div>
+<div class="sourceCode cell-code" id="cb72"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb72-1"><a href="#cb72-1" aria-hidden="true" tabindex="-1"></a><span class="fu">print</span>(selected_features)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code> [1] "IL-5"                      "LPPL"                     
+ [3] "CD59"                      "FSTL1"                    
+ [5] "CXCL16, soluble"           "CD30"                     
+ [7] "Protein S"                 "Kallikrein 11"            
+ [9] "PAI-1"                     "IGFBP-4"                  
+[11] "TGF-b R III"               "HGFA"                     
+[13] "PYY"                       "MAPK2"                    
+[15] "ETHE1"                     "IL-6 sRa"                 
+[17] "MMP-2"                     "ENPP7"                    
+[19] "ENTP5"                     "Calcineurin"              
+[21] "IgD"                       "Lysozyme"                 
+[23] "DERM"                      "hnRNP K"                  
+[25] "EPHB2"                     "SIG14"                    
+[27] "TAJ"                       "CD27"                     
+[29] "SRCN1"                     "Epo"                      
+[31] "14-3-3 protein zeta/delta" "MIG"                      </code></pre>
+</div>
+<div class="sourceCode cell-code" id="cb74"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb74-1"><a href="#cb74-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Total:"</span>, <span class="fu">length</span>(selected_features), <span class="st">"proteins</span><span class="sc">\n</span><span class="st">"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Total: 32 proteins</code></pre>
+</div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb76"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb76-1"><a href="#cb76-1" aria-hidden="true" tabindex="-1"></a>train_sel <span class="ot">&lt;-</span> train_data[, <span class="fu">c</span>(selected_features, <span class="st">"group"</span>)]</span>
+<span id="cb76-2"><a href="#cb76-2" aria-hidden="true" tabindex="-1"></a>test_sel <span class="ot">&lt;-</span> test_data[, <span class="fu">c</span>(selected_features, <span class="st">"group"</span>)]</span>
+<span id="cb76-3"><a href="#cb76-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb76-4"><a href="#cb76-4" aria-hidden="true" tabindex="-1"></a>model_alt <span class="ot">&lt;-</span> <span class="fu">glm</span>(group <span class="sc">~</span> ., <span class="at">data =</span> train_sel, <span class="at">family =</span> <span class="st">"binomial"</span>)</span>
+<span id="cb76-5"><a href="#cb76-5" aria-hidden="true" tabindex="-1"></a><span class="fu">summary</span>(model_alt)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>
+Call:
+glm(formula = group ~ ., family = "binomial", data = train_sel)
+
+Coefficients:
+                              Estimate Std. Error z value Pr(&gt;|z|)
+(Intercept)                  2.020e+01  8.274e+04   0.000    1.000
+`IL-5`                      -6.966e-01  1.202e+05   0.000    1.000
+LPPL                         2.072e+01  5.403e+04   0.000    1.000
+CD59                        -1.554e+01  2.758e+05   0.000    1.000
+FSTL1                        9.136e+00  6.223e+04   0.000    1.000
+`CXCL16, soluble`            1.078e-01  5.148e+04   0.000    1.000
+CD30                        -1.997e+01  2.103e+05   0.000    1.000
+`Protein S`                  2.185e+01  3.149e+04   0.001    0.999
+`Kallikrein 11`             -1.406e+01  1.354e+05   0.000    1.000
+`PAI-1`                     -2.835e+01  7.229e+04   0.000    1.000
+`IGFBP-4`                    6.208e+00  4.085e+04   0.000    1.000
+`TGF-b R III`               -4.481e+00  8.620e+04   0.000    1.000
+HGFA                         1.832e+01  4.163e+04   0.000    1.000
+PYY                          1.519e+01  4.369e+04   0.000    1.000
+MAPK2                        4.429e+01  9.963e+04   0.000    1.000
+ETHE1                        3.165e+00  1.812e+05   0.000    1.000
+`IL-6 sRa`                  -4.094e+00  8.146e+04   0.000    1.000
+`MMP-2`                      3.618e+01  4.720e+04   0.001    0.999
+ENPP7                        4.960e+00  5.986e+04   0.000    1.000
+ENTP5                       -2.947e+01  3.313e+04  -0.001    0.999
+Calcineurin                  8.242e-01  7.131e+04   0.000    1.000
+IgD                          3.331e+01  1.002e+05   0.000    1.000
+Lysozyme                     1.366e+01  1.838e+05   0.000    1.000
+DERM                         1.725e+01  3.604e+04   0.000    1.000
+`hnRNP K`                    3.031e+01  1.715e+05   0.000    1.000
+EPHB2                        1.119e+01  1.414e+05   0.000    1.000
+SIG14                        2.658e+01  1.105e+05   0.000    1.000
+TAJ                          1.684e+01  5.439e+04   0.000    1.000
+CD27                        -4.674e+00  1.564e+05   0.000    1.000
+SRCN1                        2.905e+01  2.056e+05   0.000    1.000
+Epo                          6.298e+00  1.544e+05   0.000    1.000
+`14-3-3 protein zeta/delta` -8.926e-01  1.515e+05   0.000    1.000
+MIG                          1.069e+00  1.326e+05   0.000    1.000
+
+(Dispersion parameter for binomial family taken to be 1)
+
+    Null deviance: 1.7012e+02  on 122  degrees of freedom
+Residual deviance: 1.0213e-08  on  90  degrees of freedom
+AIC: 66
+
+Number of Fisher Scoring iterations: 25</code></pre>
+</div>
+<div class="sourceCode cell-code" id="cb78"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb78-1"><a href="#cb78-1" aria-hidden="true" tabindex="-1"></a>probs <span class="ot">&lt;-</span> <span class="fu">predict</span>(model_alt, <span class="at">newdata =</span> test_sel, <span class="at">type =</span> <span class="st">"response"</span>)</span>
+<span id="cb78-2"><a href="#cb78-2" aria-hidden="true" tabindex="-1"></a>preds <span class="ot">&lt;-</span> <span class="fu">ifelse</span>(probs <span class="sc">&gt;</span> <span class="fl">0.5</span>, <span class="dv">1</span>, <span class="dv">0</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb79"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb79-1"><a href="#cb79-1" aria-hidden="true" tabindex="-1"></a>roc_obj <span class="ot">&lt;-</span> <span class="fu">roc</span>(y_test, probs)</span>
+<span id="cb79-2"><a href="#cb79-2" aria-hidden="true" tabindex="-1"></a>auc_alt <span class="ot">&lt;-</span> <span class="fu">auc</span>(roc_obj)</span>
+<span id="cb79-3"><a href="#cb79-3" aria-hidden="true" tabindex="-1"></a>accuracy <span class="ot">&lt;-</span> <span class="fu">mean</span>(preds <span class="sc">==</span> <span class="fu">as.numeric</span>(<span class="fu">as.character</span>(y_test)))</span>
+<span id="cb79-4"><a href="#cb79-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb79-5"><a href="#cb79-5" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Alternative LASSO panel AUROC:"</span>, <span class="fu">round</span>(auc_alt, <span class="dv">3</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Alternative LASSO panel AUROC: 0.838 </code></pre>
+</div>
+<div class="sourceCode cell-code" id="cb81"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb81-1"><a href="#cb81-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">"Accuracy:"</span>, <span class="fu">round</span>(accuracy, <span class="dv">3</span>), <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Accuracy: NA </code></pre>
+</div>
+<div class="sourceCode cell-code" id="cb83"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb83-1"><a href="#cb83-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ROC plot</span></span>
+<span id="cb83-2"><a href="#cb83-2" aria-hidden="true" tabindex="-1"></a><span class="fu">plot</span>(roc_obj, <span class="at">col =</span> <span class="st">"blue"</span>, <span class="at">main =</span> <span class="st">"ROC Curve - Alternative LASSO Panel"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output-display">
+<div>
+<figure class="figure">
+<p><img src="report_files/figure-html/unnamed-chunk-25-1.png" class="img-fluid figure-img" width="672"></p>
+</figure>
+</div>
+</div>
+</div>
 </section>
 </section>
 
