@@ -1,50 +1,520 @@
 ---
 title: "Biomarkers of ASD"
-subtitle: "If you want a subtitle put it here"
-author: "List names here"
+author:
+- Jimmy Wu
+- Jasper Luo
+- Coraline Zhu
+- Charles Yang
+- Ben Hurt
 date: last-modified
 published-title: "Updated"
 editor: visual
-format: html
+format:
+  html:
+    self-contained: true
 code-copy: true
 execute:
   message: false
   warning: false
-  echo: false
+  echo: true
   cache: true
 ---
 
-Use this as a template. Keep the headers and remove all other text. In all, your report can be quite short. When it is complete, render and then push changes to your team repository.
-
-```{r}
-# load any other packages and read data here
+```{r setup, include=FALSE}
 library(tidyverse)
+library(here)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(e1071)
+library(randomForest)
+library(pROC)
+library(caret)
 ```
 
 ## Abstract
 
-Write a brief one-paragraph abstract that describes the contents of your write-up.
+In this write up, we use blood based protein biomarkers to classify individuals with autism spectrum disorder (ASD) from typically developing (TD) individuals. We use a PLoS One dataset from the research paper, "Blood biomarker discovery for autism spectrum disorder: A proteomic analysis". Looking into the data, we first see that raw protein measures are right skewed and require transformation to balance the data. Furthermore, we investigate any anomalies and outliers to see if there may be any patterns. After preprocessing the data and performing median imputation (a technique for imputing missing data using the median statistic), we trained a random forest classifier. To assess the performance of this classifier, we consider metrics like accuracy and AUC. Using this classifier, we consider the top ten most important features it uses in classifying individuals, and find the specific biomarkers that contribute toward identifying ASD and TD individuals. Building upon this, we also train a lasso-ridge classifier model using two different sets of parameters to attempt to improve our baseline random forest classifier. We find that the lasso-ridge classifier outperforms the random forest model by three points on the AUC metric (AUC RF .808 vs AUC LR .838).
 
 ## Dataset
 
-Write a brief data description, including: how data were obtained; sample characteristics; variables measured; and data preprocessing. This can be largely based on the source paper and should not exceed 1-2 paragraphs.
+The dataset contains serum protein measurements from 154 children, 76 of which diagnosed with ASD (autism spectrum disorder) and the remaining 78 considered TD (typically developing). Taken from the study, “Blood biomarker discovery for autism spectrum disorder: A proteomic analysis” these samples were analyzed and provide the expression levels of around 1,300+ proteins. The dataset itself includes a label identifying whether or not a participant has ASD or is TD, along with biomarker measurements for each participant. These biomarker measurements are numerical, whereas the labels are strings. Before analysis, we observed that the raw protein levels had strong right skewedness, so we performed a log transformation to correct the variance (balance the dataset) and reduce the influence the outliers may have. Then, we examined such outliers to identify any patterns and used median imputation within each group to handle any missing values while preserving group characteristics/features before training our random forest.
 
-## Summary of published analysis
-
-Summarize the methodology of the paper in 1-3 paragraphs. You need not explain the methods in depth as we did in class; just indicate what methods were used and how they were combined. If possible, include a diagram that depicts the methodological design. (Quarto has support for [GraphViz and Mermaid flowcharts](https://quarto.org/docs/authoring/diagrams.html).) Provide key results: the proteins selected for the classifier and the estimated accuracy.
+```{r}
+biomarker_raw <- read_csv(here::here("data", "biomarker-raw.csv"), show_col_types = FALSE)
+```
 
 ## Findings
 
-Summarize your findings here. I've included some subheaders in a way that seems natural to me; you can structure this section however you like.
+**Task 1**
 
-### Impact of preprocessing and outliers
+```{r}
+num_dat <- biomarker_raw %>% select(where(is.numeric))
 
-Tasks 1-2
+# pick a small sample of proteins to visualize (change n if you want)
+set.seed(1)
+sample_prots <- sample(colnames(num_dat), size = min(6, ncol(num_dat)))
+
+sample_prots
+```
+
+```{r}
+# histograms of raw protein values
+par(mfrow = c(2, 3))
+for (v in sample_prots) {
+  hist(num_dat[[v]], breaks = 30, main = paste(v, "(raw)"),
+       xlab = "protein level", col = "grey")
+  dev.flush()
+}
+par(mfrow = c(1,1))
+```
+
+Raw protein levels are highly right-skewed. In the raw histograms, most samples sit near the lower end with a long right tail and big outliers. The skewness numbers (skew_raw) are usually large and positive.
+
+```{r}
+# skewness before vs after
+sk_tbl <- tibble(
+  protein = sample_prots,
+  skew_raw = map_dbl(sample_prots, ~ skewness(num_dat[[.x]], na.rm = TRUE)),
+  skew_log = map_dbl(sample_prots, ~ {
+    vals <- num_dat[[.x]]
+    vals[vals < -1] <- NA
+    skewness(log1p(vals), na.rm = TRUE)
+  })
+)
+sk_tbl
+# histograms after log1p transform
+par(mfrow = c(2, 3))
+for (v in sample_prots) {
+  vals <- num_dat[[v]]
+  vals[vals < -1] <- NA
+  hist(log1p(vals), breaks = 30,
+       main = paste(v, "log1p"),
+       xlab = "log(1 + protein level)",
+       col = "grey")
+}
+par(mfrow = c(1,1))
+```
+
+After a log transform, distributions look more symmetric. The log1p histograms compress the right tail, and skew_log becomes much closer to 0. This makes many proteins look more normal.
+
+```{r}
+# mean–variance relationship
+mean_raw <- sapply(num_dat, function(x) mean(x, na.rm = TRUE))
+var_raw  <- sapply(num_dat, function(x) var(x,  na.rm = TRUE))
+
+mean_log <- sapply(num_dat, function(x) {
+  x_clean <- ifelse(x < -1, NA, x)        
+  mean(log1p(x_clean), na.rm = TRUE)
+})
+
+var_log <- sapply(num_dat, function(x) {
+  x_clean <- ifelse(x < -1, NA, x)
+  var(log1p(x_clean), na.rm = TRUE)
+})
+
+par(mfrow = c(1,2))
+plot(mean_raw, var_raw, pch = 19, cex = .6,
+     xlab = "Mean (raw)", ylab = "Variance (raw)",
+     main = "Raw: strong mean–variance coupling")
+plot(mean_log, var_log, pch = 19, cex = .6,
+     xlab = "Mean (log1p)", ylab = "Variance (log1p)",
+     main = "Log: variance stabilized")
+par(mfrow = c(1,1))
+
+```
+
+Variance stabilization. In the raw data, proteins with larger means also have much larger variance. On the log scale, that relationship is flatter, so variability is more comparable across proteins. This helps methods that assume roughly constant variance or are sensitive to scale.
+
+Reduces the influence of extreme values. Log compresses very large measurements so a few high-abundance proteins don’t dominate model fitting or distance calculations.
+
+Handles zeros safely. Using log1p(x) = log(1+x) avoids issues when some proteins have zero (or near zero) values.
+
+```{r}
+summary_tbl <- num_dat %>%
+  summarise(across(all_of(sample_prots), list(
+    p50 = ~median(.x, na.rm=TRUE),
+    mean = ~mean(.x, na.rm=TRUE),
+    p95 = ~quantile(.x, .95, na.rm=TRUE),
+    p99 = ~quantile(.x, .99, na.rm=TRUE)
+  ))) %>%
+  pivot_longer(everything(),
+               names_to = c("protein","stat"),
+               names_sep = "_",
+               values_to = "value") %>%
+  pivot_wider(names_from = stat, values_from = value)
+
+summary_tbl
+```
+
+We log-transform protein levels because the raw values are strongly rightskewed with heavy tails and heteroscedasticity; logging makes them more symmetric, stabilizes variance, and reduces the impact of outliers—yielding features that are easier for downstream models to learn from.
+
+**Task 2**
+
+We will approach this task by finding the outliers' basic distribution parameters, distribution, and their relevant categorical variables. Sub-findings of these three main directions will be presented by graphs.
+
+We first start with finding the number of outliers per subject to help us get an initial view of the outlier's situation.
+
+```{r, warning=FALSE}
+if (!"subject_id" %in% names(biomarker_raw)) {
+  biomarker_raw <- biomarker_raw %>% mutate(subject_id = row_number(), .before = 1)
+}
+if ("Group" %in% names(biomarker_raw) && !"group" %in% names(biomarker_raw)) {
+  biomarker_raw <- biomarker_raw %>% rename(group = Group)
+}
+
+meta_cols <- c("subject_id", "group", "Target Full Name")
+
+biomarker_raw <- biomarker_raw %>%
+  mutate(across(-any_of(meta_cols), ~ readr::parse_number(as.character(.x))))
+
+num_cols <- biomarker_raw %>%
+  select(-any_of(meta_cols)) %>%
+  select(where(is.numeric)) %>%
+  names()
+```
+
+```{r}
+outlier_limits <- biomarker_raw %>%
+  select(all_of(num_cols)) %>%
+  pivot_longer(everything(), names_to = "biomarker", values_to = "value") %>%
+  group_by(biomarker) %>%
+  summarize(
+    Q1 = quantile(value, 0.25, na.rm = TRUE),
+    Q3 = quantile(value, 0.75, na.rm = TRUE),
+    IQR = Q3 - Q1,
+    lower = Q1 - 1.5 * IQR,
+    upper = Q3 + 1.5 * IQR,
+    .groups = "drop"
+  )
+
+outlier_flagged <- biomarker_raw %>%
+  select(subject_id, group, all_of(num_cols)) %>%
+  pivot_longer(cols = all_of(num_cols), names_to = "biomarker", values_to = "value") %>%
+  left_join(outlier_limits, by = "biomarker") %>%
+  mutate(is_outlier = value < lower | value > upper)
+
+subject_outlier_counts <- outlier_flagged %>%
+  group_by(subject_id, group) %>%
+  summarize(n_outliers = sum(is_outlier, na.rm = TRUE), .groups = "drop") %>%
+  filter(!is.na(group))
+
+summary_by_group <- subject_outlier_counts %>%
+  group_by(group) %>%
+  summarize(
+    mean_outliers   = mean(n_outliers),
+    median_outliers = median(n_outliers),
+    max_outliers    = max(n_outliers),
+    .groups = "drop"
+  )
+
+kable(summary_by_group, caption = "Outlier counts per subject, summarized by group")
+```
+
+The summary table shows that subjects in both groups (ASD and TD) have similar number of outlying biomarker values. Specifically, the ASD group has a mean of about 65 outliers per subject, while the TD group has about 59. In terms of variability, ASD is higher than TD group, as suggested by the median and maximum outlying values.
+
+We then proceed to draw a boxplot to further examine the distribution of the outliers.
+
+```{r}
+ggplot(subject_outlier_counts %>% filter(!is.na(group)),
+       aes(x = group, y = n_outliers)) +
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  geom_point(position = position_jitter(width = 0.15, height = 0), alpha = 0.6) +
+  theme_minimal(base_size = 12) +
+  labs(title = "Number of Outlying Biomarker Values per Subject",
+       x = "Group", y = "Count of Outlying Values")
+```
+
+Information we can derive from the boxplot aligns with our findings from the previous chart. In terms of distribution, both ASD and TD groups are right-skewed, implying that while most subjects have moderate numbers of outlying biomarker values, a few individuals shows extremely high counts.
+
+The spread is slightly larger for the ASD group, suggesting that it may contains more extreme subjects. Overall, outliers occur in both groups, but variability appears somewhat greater among ASD group.
+
+Thus, we are also interested to identify the specific subjects that are responsible for the variability. Namely, subjects that have extreme outlying values are likely the cause for a greater variability in general. We will move forward to identify the possible subjects.
+
+```{r}
+subject_outlier_counts %>%
+  filter(!is.na(group)) %>%
+  arrange(desc(n_outliers)) %>%
+  head(10) %>%
+  kable(caption = "Subjects with the most outlying biomarker values")
+```
+
+This table identifies specific subjects responsible for the extreme values observed in the previous analyses. Subjects 156, 149, and 110 (TD) and 65 and 10 (ASD) present the highest counts of outlying biomarkers, each exceeding 200. These individuals are likely driving the group-level variability seen in the boxplot. Therefore, future preprocessing steps should consider removing or, at least, examining these individuals rather than trimming entire groups.
+
+Conclusively, given that we disable the outlier trimming process, a small subset of participants, both ASD and TD specifically, produce a number of extreme biomarker values. Outliers are slightly more frequent and variable in the ASD group, but the overall distribution suggests that extreme measurements are individual-caused, not group-driven.
 
 ### Methodological variations
 
 Task 3
 
+We start by examining the raw data to see both classes (ASD and TD) are present. This baseline helps us track if samples disappear during cleaning. If we see both classes here, we know our original data is good.
+
+```{r}
+load(here::here("data", "biomarker-clean.RData"))
+ls()
+print(table(biomarker_clean$group))
+```
+
+```{r}
+# Remove columns that are ALL NA
+df <- biomarker_clean %>%
+  select(where(~!all(is.na(.))))
+
+print(table(df$group))
+```
+
+We remove columns where every single value is missing (all NA), as these provide no information for modeling. This step should NOT remove any rows or change class distribution - we're only dropping useless features.
+
+```{r}
+# Separate numeric columns and group
+numeric_cols <- names(df)[sapply(df, is.numeric)]
+group_col <- df$group
+
+# Impute missing values with median
+for (col in numeric_cols) {
+  if (any(is.na(df[[col]]))) {
+    df <- df %>%
+      group_by(group) %>%
+      mutate(!!col := ifelse(is.na(.data[[col]]), 
+                             median(.data[[col]], na.rm = TRUE), 
+                             .data[[col]])) %>%
+      ungroup()
+    
+    if (any(is.na(df[[col]]))) {
+      df[[col]][is.na(df[[col]])] <- median(df[[col]], na.rm = TRUE)
+    }
+  }
+}
+
+# Remove any remaining rows with NA
+df <- df %>% na.omit()
+
+print(table(df$group))
+
+# Verify we have both classes
+if (length(unique(df$group)) < 2) {
+  stop("ERROR: Still missing one class. Check your imputation.")
+}
+```
+
+This is the most important step. Instead of deleting rows with missing values (which removed all TD samples), we fill them with reasonable estimates. We use the median value from each group separately (ASD vs TD) to preserve group-specific patterns. This keeps both classes in our dataset while still handling missing data appropriately.
+
+```{r}
+# Prepare for modeling
+colnames(df) <- make.names(colnames(df))
+df$group <- as.factor(df$group)
+df$group <- droplevels(df$group)
+
+print(table(df$group))
+minority_pct <- min(table(df$group)) / sum(table(df$group)) * 100
+print(paste("Minority class:", round(minority_pct, 1), "%"))
+```
+
+We clean up column names to avoid special characters that could cause issues, convert our outcome variable to a factor (required for classification), and remove any unused factor levels. We also calculate class imbalance to see if we need to handle it during training.
+
+```{r}
+# Stratified train/test split
+set.seed(10302025)
+train_idx <- createDataPartition(df$group, p = 0.8, list = FALSE)
+train_df <- df[train_idx, ]
+test_df  <- df[-train_idx, ]
+
+# Drop unused levels
+train_df$group <- droplevels(train_df$group)
+test_df$group <- droplevels(test_df$group)
+
+print("Train:")
+print(table(train_df$group))
+print("Test:")
+print(table(test_df$group))
+```
+
+We split data into 80% training and 20% test sets using stratified sampling, which ensures both ASD and TD are proportionally represented in each set. This prevents situations where one class might be entirely missing from the test set. Setting a seed makes results reproducible.
+
+```{r}
+# Train Random Forest with class balancing
+# Calculate class weights for imbalanced data
+class_counts <- table(train_df$group)
+class_weights <- max(class_counts) / class_counts
+
+print("Class Weight:")
+print(class_weights)
+```
+
+We train a Random Forest classifier with 500 trees, using the class weights we calculated to handle imbalance. The 'importance=TRUE' flag tells the model to track which features are most useful for classification, helping us understand what biomarkers best distinguish ASD from TD.
+
+```{r}
+
+rf_model <- randomForest(
+  group ~ ., 
+  data = train_df, 
+  importance = TRUE,
+  classwt = class_weights,  # Handle class imbalance
+  ntree = 500
+)
+
+print("Model Summary")
+print(rf_model)
+
+# Predictions
+rf_pred_class <- predict(rf_model, newdata = test_df, type = "response")
+rf_pred_prob <- predict(rf_model, newdata = test_df, type = "prob")
+
+# Confusion matrix
+conf_mat <- table(Predicted = rf_pred_class, Actual = test_df$group)
+print(conf_mat)
+
+# Calculate accuracy
+accuracy <- sum(diag(conf_mat)) / sum(conf_mat)
+print(paste("Accuracy:", round(accuracy * 100, 2), "%"))
+```
+
+We apply our trained model to the held-out test set to evaluate performance. The confusion matrix shows how many samples were correctly vs incorrectly classified. Accuracy tells us the overall percentage correct, but we'll also look at AUC which better handles imbalanced classes.
+
+```{r}
+# ROC/AUC (use minority class - usually ASD)
+minority_class <- names(which.min(table(df$group)))
+print(paste("\nUsing", minority_class, "as positive class for ROC"))
+
+rf_pred_minority <- rf_pred_prob[, minority_class]
+
+# Create ROC
+roc_obj <- roc(test_df$group, rf_pred_minority)
+auc_val <- auc(roc_obj)
+
+print("ROC results:")
+print(roc_obj)
+print(paste("AUC:", round(auc_val, 4)))
+
+# Plot ROC curve
+plot(roc_obj, 
+     main = paste("ROC Curve - AUC:", round(auc_val, 3)),
+     col = "blue", 
+     lwd = 2)
+abline(a = 0, b = 1, lty = 2, col = "red")
+
+# Feature importance
+importance_scores <- importance(rf_model)
+importance_df <- data.frame(
+  Feature = rownames(importance_scores),
+  MeanDecreaseGini = importance_scores[, "MeanDecreaseGini"]
+)
+importance_df <- importance_df[order(-importance_df$MeanDecreaseGini), ]
+print(head(importance_df, 10))
+
+# Plot feature importance
+varImpPlot(rf_model, n.var = 10, main = "Top 10 Important Features")
+```
+
+ROC curve shows the trade-off between true positive rate (sensitivity) and false positive rate across different probability thresholds. AUC (Area Under Curve) summarizes this into a single number: 0.5 is random guessing, 1.0 is perfect classification. For clinical biomarkers, AUC \> 0.8 is generally considered good performance.
+
+This plot visualizes our model's discrimination ability. The blue curve shows our Random Forest performance - the more it bows toward the top-left corner, the better. The red diagonal line represents random guessing (50/50). A good classifier has substantial separation from this baseline.
+
+Feature importance tells us which biomarkers contribute most to distinguishing ASD from TD. Higher scores mean the feature is more useful for classification. These top-ranked biomarkers are candidates for further clinical investigation as they show the strongest association with ASD diagnosis in our Random Forest model.
+
 ### Improved classifier
 
-Task 4
+```{r}
+library(glmnet)
+library(pROC)
+library(caret)
+library(tidyverse)
+library(modelr)
+library(rsample)
+library(yardstick)
+library(ggplot2)
+library(dplyr)
+
+load(here::here("data", "biomarker-clean.RData"))
+
+head(biomarker_clean)
+biomarker_data <- biomarker_clean %>% 
+  select(-starts_with("ados"))
+
+biomarker_data$group <- factor(biomarker_data$group)
+```
+
+```{r}
+set.seed(1)
+partitions <- biomarker_data %>% 
+  initial_split(prop = 0.8)
+
+partitions
+
+train_data <- training(partitions)
+test_data <- testing(partitions)
+
+X_train <- train_data[, !(names(train_data) %in% "group")]
+y_train <- train_data$group
+X_test <- test_data[, !(names(test_data) %in% "group")]
+y_test <- test_data$group
+```
+
+Fit lasso logistic regression (feature selection)
+
+```{r}
+X_train_mat <- as.matrix(X_train)
+X_test_mat <- as.matrix(X_test)
+
+# 10-fold cross-validation for lambda
+cv_fit <- cv.glmnet(
+  X_train_mat, y_train,
+  family = "binomial",
+  alpha = 0.77,
+  nfolds = 10,
+  type.measure = 'deviance')
+
+plot(cv_fit)
+lambda_min <- cv_fit$lambda.min
+lambda_1se <- cv_fit$lambda.1se
+```
+
+```{r}
+# LASSO estimates
+fit <- glmnet(X_train, y_train, family = "binomial")
+fit_df <- tidy(fit)
+
+ggplot(fit_df, aes(x = log(lambda), y = estimate, color = term)) +
+  geom_line() +
+  theme_minimal() +
+  labs(x = "log(Lambda)", y = "Coefficient") +
+  theme(legend.position = "none") +
+  geom_vline(xintercept = log(lambda_min), linetype = "dashed", color = "red") +
+  geom_vline(xintercept = log(lambda_1se), linetype = "dashed", color = "blue")
+```
+
+Identify selected biomarkers
+
+```{r}
+coef_lasso <- coef(cv_fit, s = "lambda.1se")
+selected_idx <- which(coef_lasso != 0)
+selected_features <- rownames(coef_lasso)[selected_idx][-1] # drop intercept
+
+cat("Selected proteins:\n")
+print(selected_features)
+cat("Total:", length(selected_features), "proteins\n")
+```
+
+```{r}
+train_sel <- train_data[, c(selected_features, "group")]
+test_sel <- test_data[, c(selected_features, "group")]
+
+model_alt <- glm(group ~ ., data = train_sel, family = "binomial")
+summary(model_alt)
+
+probs <- predict(model_alt, newdata = test_sel, type = "response")
+preds <- ifelse(probs > 0.5, 1, 0)
+```
+
+```{r}
+roc_obj <- roc(y_test, probs)
+auc_alt <- auc(roc_obj)
+accuracy <- mean(preds == as.numeric(as.character(y_test)))
+
+cat("Alternative LASSO panel AUROC:", round(auc_alt, 3), "\n")
+cat("Accuracy:", round(accuracy, 3), "\n")
+
+# ROC plot
+plot(roc_obj, col = "blue", main = "ROC Curve - Alternative LASSO Panel")
+```
